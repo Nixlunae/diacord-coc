@@ -3,6 +3,7 @@ from discord.ext import commands
 import json
 import random
 import re
+import os
 
 # 机器人设置
 intents = discord.Intents.default()
@@ -16,15 +17,15 @@ STATS_FILE = 'stats.json'
 # 读取本地存储的文件
 def load_data(file_path):
     try:
-        with open(file_path, 'r') as file:
+        with open(file_path, 'r', encoding='utf-8') as file:
             return json.load(file)
     except FileNotFoundError:
         return {}
 
 # 写入本地存储的文件
 def save_data(file_path, data):
-    with open(file_path, 'w') as file:
-        json.dump(data, file)
+    with open(file_path, 'w', encoding='utf-8') as file:
+        json.dump(data, file, ensure_ascii=False)
 
 nicknames = load_data(NICKNAME_FILE)
 stats = load_data(STATS_FILE)
@@ -52,35 +53,54 @@ async def nn(ctx, nickname):
         nicknames[user_id] = nickname
         save_data(NICKNAME_FILE, nicknames)
         await ctx.send(f"昵称已设置为：{nickname}")
-@bot.command()
-async def st(ctx, *args):
+
+@bot.command(name="st")
+async def set_attributes(ctx, *, args):
     user_id = str(ctx.author.id)
     if user_id not in stats:
         stats[user_id] = {}
 
-    message = "属性更新：\n"
-    for arg in args:
-        match = re.match(r"(\D+)([+-]?\d+)", arg)
-        if match:
-            attr, value = match.groups()
-            value = int(value)
-            if attr in stats[user_id]:
-                original_value = stats[user_id][attr]
-                if "+" in arg or "-" in arg:
-                    stats[user_id][attr] += value
-                    message += f"{attr}: {original_value} -> {stats[user_id][attr]}\n"
-                else:
-                    stats[user_id][attr] = value
-                    message += f"{attr} 已更新为 {value}\n"
-            else:
-                if "+" in arg or "-" in arg:
-                    await ctx.send(f"属性 {attr} 尚未设定初始值。请先设定。")
-                    continue
-                stats[user_id][attr] = value
-                message += f"{attr} 已设定为 {value}\n"
+    # 使用正则表达式匹配输入模式
+    pattern = re.compile(r'([一-龥a-zA-Z]+)([+-]?(?:\d+d\d+|\d+))')
+    matches = pattern.findall(args)
 
+    if not matches:
+        await ctx.send("输入格式有误，请使用正确的格式：例如 .st 力量50 或 .st hp+2d6")
+        return
+
+    updates = []
+    for attr, value in matches:
+        attr = attr.lower()
+
+        # 解析数值或骰子表达式
+        if 'd' in value:
+            # 骰子表达式处理，例如 2d6 或 -3d4
+            sign = -1 if value.startswith('-') else 1
+            dice_part = value.lstrip('+-')
+            num, sides = map(int, dice_part.split('d'))
+            roll_result = sum(random.randint(1, sides) for _ in range(num))
+            value = sign * roll_result
+        else:
+            # 直接数值处理，例如 +2 或 -3 或 50
+            value = int(value)
+
+        # 更新属性值
+        current_value = stats[user_id].get(attr, 0)
+        if value >= 0 and not ('+' in args or '-' in args):
+            # 直接赋值，例如 .st 力量50
+            new_value = value
+        else:
+            # 增量更新，例如 .st hp+2 或 .st hp-3
+            new_value = current_value + value
+
+        stats[user_id][attr] = new_value
+        updates.append(f"{attr} 已更新为 {new_value}（变化：{'+' if value >= 0 else ''}{value}）")
+
+    # 保存数据并发送更新消息
     save_data(STATS_FILE, stats)
-    await ctx.send(message)
+    await ctx.send(f"属性更新：\n" + "\n".join(updates))
+
+
 @bot.command()
 async def ra(ctx, *args):
     user_id = str(ctx.author.id)
@@ -124,6 +144,7 @@ async def ra(ctx, *args):
         result_message += " - 失败"
 
     await ctx.send(result_message)
+
 @bot.command()
 async def r(ctx, *args):
     results = []
@@ -146,5 +167,6 @@ async def r(ctx, *args):
         await ctx.send(f"默认投掷 1d100 结果：{roll}")
     else:
         await ctx.send("\n".join(results))
+
 # 运行机器人，替换 'YOUR_BOT_TOKEN' 为你的真实 Token
 bot.run(os.getenv("DISCORD_TOKEN"))
